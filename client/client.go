@@ -43,4 +43,14 @@ type Client interface {
 
 	// Checks the health of the KairosDB Server.
 	HealthCheck() (*response.Response, error)
+
+	GetMetricNamesNeq(metricName string) ([]string, error)
+
+	GetMetricNamesReg(metricNameReg string, neq bool) ([]string, error)
+
+	GetTagNamesReg(tagNameReg string, neq bool) ([]string, error)
+
+	GetTagValuesReg(tagValueReg string, neq bool) ([]string, error)
+
+	GetTagValuesNeq(tagValue string) ([]string, error)
 }

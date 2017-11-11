@@ -20,27 +20,36 @@ import (
 	"io/ioutil"
 	"net/http"
 
+	"fmt"
 	"github.com/ArthurHlt/go-kairosdb/builder"
 	"github.com/ArthurHlt/go-kairosdb/response"
+	"regexp"
+	"time"
 )
 
 var (
-	api_version    = "/api/v1"
-	datapoints_ep  = api_version + "/datapoints"
-	query_ep       = api_version + "/datapoints/query"
-	version_ep     = api_version + "/version"
-	health_ep      = api_version + "/health/check"
-	metricnames_ep = api_version + "/metricnames"
-	tagnames_ep    = api_version + "/tagnames"
-	tagvalues_ep   = api_version + "/tagvalues"
-	delmetric_ep   = api_version + "/metric/"
+	api_version                  = "/api/v1"
+	datapoints_ep                = api_version + "/datapoints"
+	query_ep                     = api_version + "/datapoints/query"
+	version_ep                   = api_version + "/version"
+	health_ep                    = api_version + "/health/check"
+	metricnames_ep               = api_version + "/metricnames"
+	tagnames_ep                  = api_version + "/tagnames"
+	tagvalues_ep                 = api_version + "/tagvalues"
+	delmetric_ep                 = api_version + "/metric/"
+	cacheTTL       time.Duration = time.Second * 30
 )
 
-type optSetter func(f *httpClient)
+type CacheElem struct {
+	resp         *response.GetResponse
+	lastRetrieve time.Time
+}
+
+type optSetter func(c *httpClient)
 
 func NetHttpClient(cli *http.Client) optSetter {
-	return func(f *httpClient) {
-		f.cli = cli
+	return func(c *httpClient) {
+		c.cli = cli
 	}
 }
 
@@ -48,12 +57,14 @@ func NetHttpClient(cli *http.Client) optSetter {
 type httpClient struct {
 	serverAddress string
 	cli           *http.Client
+	cacheStore    map[string]CacheElem
 }
 
 func NewHttpClient(serverAddress string, setters ...optSetter) Client {
 	c := &httpClient{
 		serverAddress: serverAddress,
 		cli:           &http.Client{},
+		cacheStore:    make(map[string]CacheElem),
 	}
 	for _, s := range setters {
 		s(c)
@@ -61,19 +72,118 @@ func NewHttpClient(serverAddress string, setters ...optSetter) Client {
 	return c
 }
 
+func (hc *httpClient) cache(key string, fallback func() (*response.GetResponse, error)) (*response.GetResponse, error) {
+	if elem, ok := hc.cacheStore[key]; ok {
+		whenExpire := elem.lastRetrieve.Add(cacheTTL)
+		if whenExpire.After(time.Now()) {
+			return elem.resp, nil
+		}
+	}
+	resp, err := fallback()
+	if err != nil {
+		return nil, err
+	}
+	hc.cacheStore[key] = CacheElem{resp, time.Now()}
+	return resp, nil
+}
+
 // Returns a list of all metrics names.
 func (hc *httpClient) GetMetricNames() (*response.GetResponse, error) {
-	return hc.get(hc.serverAddress + metricnames_ep)
+	return hc.cache("metric_names", func() (*response.GetResponse, error) {
+		return hc.get(hc.serverAddress + metricnames_ep)
+	})
+}
+
+func (hc *httpClient) GetMetricNamesNeq(metricName string) ([]string, error) {
+	metricNames, err := hc.GetMetricNames()
+	if err != nil {
+		return []string{}, err
+	}
+	finalNames := make([]string, 0)
+	for _, m := range metricNames.Results {
+		if m == metricName {
+			continue
+		}
+		finalNames = append(finalNames, m)
+	}
+	return finalNames, nil
+}
+
+func (hc *httpClient) GetMetricNamesReg(metricNameReg string, neq bool) ([]string, error) {
+	metricNames, err := hc.GetMetricNames()
+	if err != nil {
+		return []string{}, err
+	}
+	reg := regexp.MustCompile(fmt.Sprintf("/^%s/", metricNameReg))
+	finalNames := make([]string, 0)
+	for _, m := range metricNames.Results {
+		if reg.MatchString(m) == neq {
+			continue
+		}
+		finalNames = append(finalNames, m)
+	}
+	return finalNames, nil
+}
+
+func (hc *httpClient) GetTagNamesReg(tagNameReg string, neq bool) ([]string, error) {
+	tagNames, err := hc.GetTagNames()
+	if err != nil {
+		return []string{}, err
+	}
+	reg := regexp.MustCompile(fmt.Sprintf("/^%s/", tagNameReg))
+	finalNames := make([]string, 0)
+	for _, t := range tagNames.Results {
+		if reg.MatchString(t) == neq {
+			continue
+		}
+		finalNames = append(finalNames, t)
+	}
+	return finalNames, nil
 }
 
 // Returns a list of all tag names.
 func (hc *httpClient) GetTagNames() (*response.GetResponse, error) {
-	return hc.get(hc.serverAddress + tagnames_ep)
+	return hc.cache("tag_names", func() (*response.GetResponse, error) {
+		return hc.get(hc.serverAddress + tagnames_ep)
+	})
 }
 
 // Returns a list of all tag values.
 func (hc *httpClient) GetTagValues() (*response.GetResponse, error) {
-	return hc.get(hc.serverAddress + tagvalues_ep)
+	return hc.cache("tag_values", func() (*response.GetResponse, error) {
+		return hc.get(hc.serverAddress + tagvalues_ep)
+	})
+}
+
+func (hc *httpClient) GetTagValuesNeq(tagValue string) ([]string, error) {
+	tagValNames, err := hc.GetTagValues()
+	if err != nil {
+		return []string{}, err
+	}
+	finalNames := make([]string, 0)
+	for _, t := range tagValNames.Results {
+		if t == tagValue {
+			continue
+		}
+		finalNames = append(finalNames, t)
+	}
+	return finalNames, nil
+}
+
+func (hc *httpClient) GetTagValuesReg(tagValueReg string, neq bool) ([]string, error) {
+	tagValNames, err := hc.GetTagValues()
+	if err != nil {
+		return []string{}, err
+	}
+	reg := regexp.MustCompile(fmt.Sprintf("/^%s/", tagValueReg))
+	finalNames := make([]string, 0)
+	for _, v := range tagValNames.Results {
+		if reg.MatchString(v) == neq {
+			continue
+		}
+		finalNames = append(finalNames, v)
+	}
+	return finalNames, nil
 }
 
 // Queries KairosDB using the query built using builder.
