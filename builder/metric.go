@@ -34,6 +34,10 @@ type Metric interface {
 	// Adds a tag to the datapoint.
 	AddTag(name, val string) Metric
 
+	// Add a map of tags. This narrows the query to only show data points
+	// associated with the tags' values.
+	AddTags(tags map[string]string) Metric
+
 	// Adds a datapoint to the metric. The value is of int64 type.
 	AddDataPoint(timestamp int64, value interface{}) Metric
 
@@ -82,6 +86,13 @@ func (m *metricType) AddTTL(ttl int64) Metric {
 
 func (m *metricType) AddType(t string) Metric {
 	m.Type = t
+	return m
+}
+
+func (m *metricType) AddTags(tags map[string]string) Metric {
+	for k, v := range tags {
+		m.Tags[k] = v
+	}
 	return m
 }
 
