@@ -53,6 +53,9 @@ type QueryMetric interface {
 	// Adds a grouper to the metric.
 	AddGrouper() QueryMetric
 
+	// Exclude tag for find instead of include them.
+	SetExcludeTags(excludeTags bool) QueryMetric
+
 	// Limits the number of data point returned from the query.
 	// The limit is done before aggregators are executed.
 	SetLimit(limit int) QueryMetric
@@ -70,6 +73,7 @@ type qMetric struct {
 	Limit       int               `json:"limit,omitempty"`
 	Aggregators []Aggregator      `json:"aggregators,omitempty"`
 	Order       OrderType         `json:"order,omitempty"`
+	ExcludeTags bool              `json:"exclude_tags,omitempty"`
 }
 
 func NewQueryMetric(name string) QueryMetric {
@@ -78,6 +82,11 @@ func NewQueryMetric(name string) QueryMetric {
 		Tags:        make(map[string]string),
 		Aggregators: make([]Aggregator, 0),
 	}
+}
+
+func (qm *qMetric) SetExcludeTags(excludeTags bool) QueryMetric {
+	qm.ExcludeTags = excludeTags
+	return qm
 }
 
 func (qm *qMetric) AddTags(tags map[string]string) QueryMetric {
