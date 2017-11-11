@@ -36,15 +36,29 @@ var (
 	delmetric_ep   = api_version + "/metric/"
 )
 
+type optSetter func(f *httpClient)
+
+func NetHttpClient(cli *http.Client) optSetter {
+	return func(f *httpClient) {
+		f.cli = cli
+	}
+}
+
 // This is the type that implements the Client interface.
 type httpClient struct {
 	serverAddress string
+	cli           *http.Client
 }
 
-func NewHttpClient(serverAddress string) Client {
-	return &httpClient{
+func NewHttpClient(serverAddress string, setters ...optSetter) Client {
+	c := &httpClient{
 		serverAddress: serverAddress,
+		cli:           &http.Client{},
 	}
+	for _, s := range setters {
+		s(c)
+	}
+	return c
 }
 
 // Returns a list of all metrics names.
@@ -85,7 +99,7 @@ func (hc *httpClient) PushMetrics(mb builder.MetricBuilder) (*response.Response,
 
 // Deletes a metric. This is the metric and all its datapoints.
 func (hc *httpClient) DeleteMetric(name string) (*response.Response, error) {
-	return hc.delete(hc.serverAddress + delmetric_ep + name)
+	return hc.deleteQuery(hc.serverAddress + delmetric_ep + name)
 }
 
 // TODO: Deletes data in KairosDB using the query built by the builder.
@@ -111,9 +125,8 @@ func (hc *httpClient) sendRequest(url, method string) (*http.Response, error) {
 		return nil, err
 	}
 	req.Header.Add("accept", "application/json")
-	cli := &http.Client{}
 
-	return cli.Do(req)
+	return hc.cli.Do(req)
 }
 
 func (hc *httpClient) httpRespToResponse(httpResp *http.Response) (*response.Response, error) {
@@ -180,7 +193,7 @@ func (hc *httpClient) get(url string) (*response.GetResponse, error) {
 }
 
 func (hc *httpClient) postData(url string, data []byte) (*response.Response, error) {
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(data))
+	resp, err := hc.cli.Post(url, "application/json", bytes.NewBuffer(data))
 	if err != nil {
 		return nil, err
 	}
@@ -189,7 +202,7 @@ func (hc *httpClient) postData(url string, data []byte) (*response.Response, err
 }
 
 func (hc *httpClient) postQuery(url string, data []byte) (*response.QueryResponse, error) {
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(data))
+	resp, err := hc.cli.Post(url, "application/json", bytes.NewBuffer(data))
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +210,7 @@ func (hc *httpClient) postQuery(url string, data []byte) (*response.QueryRespons
 	return hc.httpRespToQueryResponse(resp)
 }
 
-func (hc *httpClient) delete(url string) (*response.Response, error) {
+func (hc *httpClient) deleteQuery(url string) (*response.Response, error) {
 	resp, err := hc.sendRequest(url, "DELETE")
 	if err != nil {
 		return nil, err
